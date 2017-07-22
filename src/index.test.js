@@ -128,6 +128,19 @@ const tests = [
     },
     output: 'var x = 0;',
   },
+  {
+    title: 'tslint sanity test',
+    input: {
+      text: 'const x  :  Array<string> = "foo"',
+      tslintConfig: {
+        rules: new Map([
+          ['quotemark', {ruleArguments: ['single']}],
+        ]),
+      },
+      filePath: path.resolve('./test.ts'),
+    },
+    output: `const x: Array<string> = 'foo';`,
+  },
   // if you have a bug report or something,
   // go ahead and add a test case here
   {
@@ -313,9 +326,7 @@ test('logs error if it cannot read the file from the filePath', () => {
   fsMock.readFileSync = jest.fn(() => {
     throw new Error('some error')
   })
-  expect(() => format({filePath: '/some-path.js'})).toThrowError(
-    /some error/,
-  )
+  expect(() => format({filePath: '/some-path.js'})).toThrowError(/some error/)
   expect(logger.error).toHaveBeenCalledTimes(1)
   fsMock.readFileSync = originalMock
 })

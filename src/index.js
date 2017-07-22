@@ -23,10 +23,14 @@ module.exports = format
  * @param {String} options.text - the text (JavaScript code) to format
  * @param {String} options.eslintPath - the path to the eslint module to use.
  *   Will default to require.resolve('eslint')
+ * @param {String} options.tslintPath - the path to the tslint module to use.
+ *   Will default to require.resolve('tslint')
  * @param {String} options.prettierPath - the path to the prettier module.
  *   Will default to require.resovlve('prettierPath')
  * @param {Object} options.eslintConfig - the config to use for formatting
  *  with ESLint.
+ * @param {Object} options.tslintConfig - the config to use for formatting
+ *  with TSLint.
  * @param {Object} options.prettierOptions - the options to pass for
  *  formatting with `prettier`. If not provided, prettier-eslint will attempt
  *  to create the options based on the eslintConfig
@@ -47,22 +51,45 @@ function format(options) {
     filePath,
     text = getTextFromFilePath(filePath),
     eslintPath = getModulePath(filePath, 'eslint'),
+    tslintPath = getModulePath(filePath, 'tslint'),
     prettierPath = getModulePath(filePath, 'prettier'),
     prettierOptions,
     prettierLast,
     fallbackPrettierOptions,
   } = options
 
-  const eslintConfig = defaultEslintConfig(
-    getConfig(filePath, eslintPath),
-    options.eslintConfig,
-  )
+  const isCss = /\.(css|less|scss)$/.test(filePath)
+  const isJson = /\.json$/.test(filePath)
+  const isTs = /\.tsx?$/.test(filePath)
 
-  const formattingOptions = getOptionsForFormatting(
-    eslintConfig,
-    prettierOptions,
-    fallbackPrettierOptions,
-  )
+  let formattingOptions
+  let fixer
+
+  if (isTs) {
+    const tslint = getTSLint(tslintPath)
+    const tslintConfig =
+      options.tslintConfig || getTSLintConfig(filePath, tslint)
+    formattingOptions = getOptionsForFormatting(
+      {rules: {}},
+      prettierOptions,
+      fallbackPrettierOptions,
+    )
+    fixer = createTSLintFix(tslint, tslintConfig)
+  } else {
+    const eslintConfig = defaultEslintConfig(
+      getESLintConfig(filePath, eslintPath),
+      options.eslintConfig,
+    )
+    formattingOptions = getOptionsForFormatting(
+      eslintConfig,
+      prettierOptions,
+      fallbackPrettierOptions,
+    )
+    fixer =
+      !isCss && !isJson ?
+        createEslintFix(formattingOptions.eslint, eslintPath) :
+        content => content
+  }
 
   logger.debug(
     'inferred options:',
@@ -78,28 +105,21 @@ function format(options) {
     }),
   )
 
-  const isCss = /\.(css|less|scss)$/.test(filePath)
-  const isJson = /\.json$/.test(filePath)
-
   if (isCss) {
     formattingOptions.prettier.parser = 'postcss'
   } else if (isJson) {
     formattingOptions.prettier.parser = 'json'
     formattingOptions.prettier.trailingComma = 'none'
+  } else if (isTs) {
+    formattingOptions.prettier.parser = 'typescript'
   }
 
   const prettify = createPrettify(formattingOptions.prettier, prettierPath)
 
-  if (isCss || isJson) {
-    return prettify(text, filePath)
-  }
-
-  const eslintFix = createEslintFix(formattingOptions.eslint, eslintPath)
-
   if (prettierLast) {
-    return prettify(eslintFix(text, filePath))
+    return prettify(fixer(text, filePath))
   }
-  return eslintFix(prettify(text), filePath)
+  return fixer(prettify(text), filePath)
 }
 
 function createPrettify(formatOptions, prettierPath) {
@@ -178,6 +198,43 @@ function createEslintFix(eslintConfig, eslintPath) {
   }
 }
 
+function createTSLintFix(tslint, tslintConfig) {
+  const linter = new tslint.Linter({
+    fix: true,
+    rulesDirectory: tslintConfig.rulesDirectory,
+  })
+
+  return function tslintFix(text, filePath) {
+    const originalWriteFile = fs.writeFileSync
+    try {
+      let output = text
+      // TSLint doesn't currently expose autofixed content via the node API;
+      // it writes directly to the filesystem
+      fs.writeFileSync = (path, content) => (output = content)
+      logger.trace(`executing tslint --fix`)
+      linter.lint(filePath, text, tslintConfig)
+      logger.trace(
+        `tslint returned the following result:`,
+        prettyFormat(linter.getResult()),
+      )
+      logger.trace('tslint --fix: output === input', output === text)
+      logger.trace(
+        stripIndent`
+        tslint --fix output:
+
+        ${indentString(output, 2)}
+      `,
+      )
+      return output
+    } catch (error) {
+      logger.error('tslint fix failed due to a tslint error')
+      throw error
+    } finally {
+      fs.writeFileSync = originalWriteFile
+    }
+  }
+}
+
 function getTextFromFilePath(filePath) {
   try {
     logger.trace(
@@ -198,7 +255,7 @@ function getTextFromFilePath(filePath) {
   }
 }
 
-function getConfig(filePath, eslintPath) {
+function getESLintConfig(filePath, eslintPath) {
   const eslintOptions = {}
   if (filePath) {
     eslintOptions.cwd = path.dirname(filePath)
@@ -220,8 +277,31 @@ function getConfig(filePath, eslintPath) {
     return config
   } catch (error) {
     // is this noisy? Try setting options.disableLog to false
-    logger.debug('Unable to find config')
+    logger.debug('Unable to find eslint config')
     return {rules: {}}
+  }
+}
+
+function getTSLintConfig(filePath, tslint) {
+  logger.trace(
+    oneLine`
+      finding TSLint configuration for
+      "${filePath || process.cwd()}"
+    `,
+  )
+  try {
+    logger.debug(`getting tslint config for file at "${filePath}"`)
+    const config = tslint.Configuration.findConfiguration(null, filePath)
+      .results
+    logger.trace(
+      `tslint config for "${filePath}" received`,
+      prettyFormat(config),
+    )
+    return config
+  } catch (error) {
+    // is this noisy? Try setting options.disableLog to false
+    logger.debug('Unable to find tslint config')
+    return {rules: new Map()}
   }
 }
 
@@ -251,6 +331,21 @@ function getESLintCLIEngine(eslintPath, eslintOptions) {
       oneLine`
         There was trouble creating the ESLint CLIEngine.
         Is "eslintPath: ${eslintPath}" a correct path to the ESLint module?
+      `,
+    )
+    throw error
+  }
+}
+
+function getTSLint(tslintPath) {
+  try {
+    logger.trace(`requiring tslint module at "${tslintPath}"`)
+    return require(tslintPath)
+  } catch (error) {
+    logger.error(
+      oneLine`
+        There was trouble finding TSLint.
+        Is "tslintPath: ${tslintPath}" a correct path to the ESLint module?
       `,
     )
     throw error

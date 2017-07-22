@@ -1,6 +1,6 @@
 import {getOptionsForFormatting, defaultEslintConfig} from './utils'
 
-const defaultEslintConfigTests = [
+const mergeConfigTests = [
   {
     config: {
       foo: 'bar',
@@ -12,11 +12,7 @@ const defaultEslintConfigTests = [
       },
       rules: {
         indent: [2, 2, {SwitchCase: 1}],
-        quotes: [
-          2,
-          'single',
-          {avoidEscape: true, allowTemplateLiterals: true},
-        ],
+        quotes: [2, 'single', {avoidEscape: true, allowTemplateLiterals: true}],
       },
       options: {
         printWidth: 120,
@@ -57,11 +53,7 @@ const defaultEslintConfigTests = [
       rules: {
         'max-len': [2, 120, 2],
         indent: [2, 2, {SwitchCase: 1}],
-        quotes: [
-          2,
-          'single',
-          {avoidEscape: true, allowTemplateLiterals: true},
-        ],
+        quotes: [2, 'single', {avoidEscape: true, allowTemplateLiterals: true}],
       },
       options: {
         parser: 'babylon',
@@ -219,7 +211,7 @@ const getPrettierOptionsFromESLintRulesTests = [
   {rules: {indent: [2, 'tab']}, options: {useTabs: true}},
 ]
 
-defaultEslintConfigTests.forEach(({config, defaults, result}, index) => {
+mergeConfigTests.forEach(({config, defaults, result}, index) => {
   test(`defaultEslintConfigTests ${index}`, () => {
     const merged = defaultEslintConfig(config, defaults)
     expect(merged).toEqual(result)
